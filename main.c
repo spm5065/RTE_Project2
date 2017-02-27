@@ -29,8 +29,8 @@ void setupGPIO(){
 	
 	//Input from PA0 Alternate function mode
 	GPIOA->MODER &= ~GPIO_MODER_MODER0;
-	GPIOA->MODER |= GPIO_MODER_MODER0_1;
-	
+	GPIOA->MODER |= GPIO_MODER_MODER0_1|GPIO_MODER_MODER1_1;
+
 	//Seturp Alternate Function Bologna
 	GPIOA->AFR[0] &= ~GPIO_AFRL_AFRL0;
 	GPIOA->AFR[0] |= 0x0001;
@@ -67,21 +67,32 @@ void setupTimer2(){
 	//Timer Prescale 80MHz / 80 -> 1MHz
 	TIM2->PSC = (80-1);
 	
-	//Generate a Flipping Event 
-	TIM2->EGR |= TIM_EGR_UG;
 	
 	//Turn off input capture
 	TIM2->CCER &= ~TIM_CCER_CC1E;
 	
 	//Enable Input Capture channels
-	TIM2->CCMR1 &= TIM_CCMR1_CC1S;
-	TIM2->CCMR1 |= TIM_CCMR1_CC1S_0;
+	TIM2->CCMR1 &= ~TIM_CCMR1_CC1S;
+	TIM2->CCMR1 &= ~TIM_CCMR1_CC2S;
+	
+	//pwm enable with pre-load
+	TIM2->CCMR1 |= TIM_CCMR1_OC1PE | TIM_CCMR1_OC2PE | TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_2 | TIM_CCMR1_OC2M_1 | TIM_CCMR1_OC2M_2;
+	TIM2->CR1 |= TIM_CR1_ARPE;
 	
 	//Re-enable input capture
-	TIM2->CCER |= TIM_CCER_CC1E;
+	TIM2->CCER |= TIM_CCER_CC1E | TIM_CCER_CC2E;
+	
+	//20ms Period
+	TIM2->ARR = 20000;
+	
+	//Initial servo Positions
+	//todo
 	
 	//Input Caputure Filter 7 Cycles
 	//TIM2->CCMR1 |= TIM_CCMR1_IC1F_2 | TIM_CCMR1_IC1F_1 | TIM_CCMR1_IC1F_0;
+	
+	//Generate a Flipping Event 
+	TIM2->EGR |= TIM_EGR_UG;
 	
 	//Enable counter
 	TIM2->CR1 = TIM_CR1_CEN;

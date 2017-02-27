@@ -1,6 +1,9 @@
 #ifndef RECIPE_H
 #define RECIPE_H
 
+//Sevo Positions
+uint16_t pwm_pos[6] = {};//todo
+
 char recipeTest[20] = {	0b00100000,//mov0
 						0b00100101,//mov5
 						0b00100000,//mov0
