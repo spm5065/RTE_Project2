@@ -1,4 +1,4 @@
---cpu Cortex-M4.fp --branchpatch=sdcomp-29491-629360
+--cpu=Cortex-M4.fp --branchpatch=sdcomp-29491-629360
 ".\objects\main.o"
 ".\objects\startup_stm32l476xx.o"
 ".\objects\led.o"

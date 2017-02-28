@@ -18,13 +18,23 @@ char str[50] = "";
 char str2[] = "My body is ready!!!!";
 char str3[] = "It is a 1!!!";
 
-int g_pendingInterrupt = 0;
+uint8_t g_pendingInterrupt = 0;
 uint32_t clockT = 0;
-unsigned int lPeriodMS = 950;
-unsigned int hPeriodMS = 1050;
-uint16_t buckets[101];
 
-uint16_t started = 0;
+//Position status for servos
+uint8_t servoPos[2] = {0, 0};
+
+//Recipe instruction
+uint8_t recPos[2] = {0, 0};
+
+//Recipe operation status
+uint8_t recStat[2] = {0, 0};
+
+//Address to set registers
+volatile uint32_t *servos[2] = {&(TIM2->CCR1), &(TIM2->CCR2)};
+
+//Two commands
+char inputBuf[2] = {'\0', '\0'};
 
 void setupGPIO(){
 	RCC->AHB2ENR |= RCC_AHB2ENR_GPIOAEN;
@@ -37,12 +47,6 @@ void setupGPIO(){
 	GPIOA->AFR[0] &= ~GPIO_AFRL_AFRL0;
 	GPIOA->AFR[0] |= 0x0011;
 	
-	
-	// //Set Speed
-	// GPIOA->OSPEEDR |= GPIO_OSPEEDER_OSPEEDR0;
-	// //Pulldown
-	// GPIOA->PUPDR &= ~GPIO_PUPDR_PUPDR0_0;
-	// GPIOA->PUPDR |= GPIO_PUPDR_PUPDR0_1;
 
 }
 
@@ -102,69 +106,71 @@ void setupTimer2(){
 	TIM2->CR1 = TIM_CR1_CEN;
 }
 
-void EXTI0_IRQHandler(void){
-	
-	g_pendingInterrupt = 1;
-	clockT = TIM2->CCR1;
-	TIM2->CNT = 0;
-	
-	if(started && started < 1001){
-		started++;
-		if((clockT - lPeriodMS)< 101){
-			buckets[(clockT - lPeriodMS)]++;
-		}
-	}
-	
-	EXTI->PR1 |= EXTI_PR1_PIF0;
-}
+//	void EXTI0_IRQHandler(void){
+//		
+//		g_pendingInterrupt = 1;
+//		clockT = TIM2->CCR1;
+//		TIM2->CNT = 0;
+//		
+//		if(started && started < 1001){
+//			started++;
+//			if((clockT - lPeriodMS)< 101){
+//				buckets[(clockT - lPeriodMS)]++;
+//			}
+//		}
+//		
+//		EXTI->PR1 |= EXTI_PR1_PIF0;
+//	}
 
 
 
-int setupPeriod(){
-	char rxByte = 0;
-	char buf[6];
-	int i = 0;
+void parseSingleCommand(char in, int servo){
 	
-	USART_Write(USART2, (uint8_t *) PERIODSTRING, strlen(PERIODSTRING));
 	
-	memset( buf, 0, 6); //Null the buffer
-	lPeriodMS = 950;
-	hPeriodMS = lPeriodMS + 100;
-	while(1){
-		rxByte = USART_Read(USART2);
-		if(rxByte == 'y'){ //Set Limits
-			USART_Write(USART2, (uint8_t *) "\r\nEnter new Limits: ", strlen("\r\nEnter new Limits: "));
-			char rxByte = 0;
-			do{
-				if(rxByte) buf[i++] = rxByte;
-				rxByte = USART_Read(USART2);
-				if(i>5) {
-					USART_Write(USART2, (uint8_t *) "Too many characters entered...resetting...\r\n", strlen("Too many characters entered...resetting...\r\n"));
-					return 0;
-				}
-
-			}while(rxByte != '\r');
-				
-			if(!sscanf( buf, "%u", &lPeriodMS)){
-				USART_Write(USART2, (uint8_t *) "\r\nInput Invalid\r\n", strlen("\r\nInput Invalid\r\n"));
-				return 0;
-			}
-			
-			if( lPeriodMS < 50 || lPeriodMS > 9950) {
-				USART_Write(USART2, (uint8_t *) "Period out of range 50 to 9950ms... Retry\r\n", strlen("Period out of range 50 to 9950ms... Retry\r\n"));
-				return 0;
-			}
-			hPeriodMS = lPeriodMS + 100;
+	switch(in){
+		//Go right
+		case 'r':
+		case 'R':
+			if(servoPos[servo] != 0)
+				*servos[servo] = pwmDuty[--servoPos[servo]];
 			break;
-		} if( rxByte == 'n' ) break; //Break 
-		else USART_Write(USART2, (uint8_t *) "\r\nInput invalid", strlen("\r\nInput invalid"));
 		
+		//Go Left
+		case 'l':
+		case 'L':
+			if(servoPos[servo] != 5)
+				*servos[servo] = pwmDuty[++servoPos[servo]];
+			break;
+		
+		//Pause
+		case 'p':
+		case 'P':
+			recStat[servo] = FALSE;
+			break;
+		
+		//Continue
+		case 'c':
+		case 'C':
+			recStat[servo] = TRUE;
+			break;
+		
+		//No-Op
+		case 'n':
+		case 'N':
+			break;
+		
+		//restart
+		case 'b':
+		case 'B':
+			recStat[servo] = TRUE;
+			recPos[servo] = 0;
+			break;
+		
+		//Otherwise ignore
+		default:
+			break;
 	}
-	
-	return 1;
 }
-
-
 
 int main(void){
 	char rxByte = 0;
@@ -175,38 +181,39 @@ int main(void){
 	//setupInterrupt();
 	setupTimer2();
 	
-	//	//Trigger initial interrupt
-	//TIM2->EGR |= TIM_EGR_UG;
-	while(1){
-		rxByte = USART_Read(USART2);
-		TIM2->CCR1 = pwmDuty[rxByte-48];
-		rxByte = 0;
-		rxByte = USART_Read(USART2);
-		TIM2->CCR2 = pwmDuty[rxByte-48];
+	// 	//this loop switches between the two for testing
+	// 	while(1){
+	// 		rxByte = USART_Read(USART2);
+	// 		TIM2->CCR1 = pwmDuty[rxByte-48];
+	// 		rxByte = 0;
+	// 		rxByte = USART_Read(USART2);
+	// 		TIM2->CCR2 = pwmDuty[rxByte-48];
+	// 	}
+	
+	while (1){
+		char charRead;
+		while (USART_ReadNB(USART2, &charRead)){
+			
+			if(charRead == '\r'){
+				parseSingleCommand(inputBuf[0], 0);
+				parseSingleCommand(inputBuf[1], 1);
+				//parseCommands();
+			} else {
+				inputBuf[0] = inputBuf[1];
+				inputBuf[1] = charRead;
+			}
+		}
+		
+		if(recStat[0]){
+			//TODO: Run Instruction
+		}
+		
+		if(recStat[1]){
+			//TODO: Run Instruction
+		}
+		
 	}
-	//	//POST
-	//	while(!post());
-	//	USART_Write(USART2, (uint8_t *) "\r\nPOST SUCCEEDED\r\n", strlen("\r\nPOST SUCCEEDED\r\n"));
-	//	
-	//	
-	//	//Run the thing
-	//	while (1){
-	//		
-	//		while(!setupPeriod());
-	//		
-	//		char periodStr[25];
-	//		sprintf(periodStr, "Range is %d to %d\r\n", lPeriodMS, hPeriodMS);
-	//		USART_Write(USART2, (uint8_t *) periodStr, strlen(periodStr));
-	//		
-	//		for(int i = 0; i < 101; i++){
-	//			buckets[i] = 0;
-	//		}
-	//		started = 1;
-	//		while(started < 1001);
-	//		
-	//		printHistogram();
-	//		
-	//		USART_Write(USART2, (uint8_t *) "Restarting...\r\n", strlen("Restarting...\r\n"));
-	//	}
+	
+	
 }
 

@@ -106,6 +106,17 @@ uint8_t USART_Read (USART_TypeDef * USARTx) {
 	// Reading USART_DR automatically clears the RXNE flag 
 }
 
+BOOL USART_ReadNB(USART_TypeDef * USARTx, char *readChar){
+	// Check if char
+	if (!(USARTx->ISR & USART_ISR_RXNE)){
+		*readChar = NULL;
+		return FALSE;
+	};  
+	// USART resets the RXNE flag automatically after reading DR
+	*readChar =(USARTx->RDR & 0xFF);
+	return TRUE;
+}
+
 void USART_Write(USART_TypeDef * USARTx, uint8_t *buffer, uint32_t nBytes) {
 	int i;
 	// TXE is cleared by a write to the USART_DR register.
