@@ -10,5 +10,6 @@
 .\objects\main.o: SysClock.h
 .\objects\main.o: LED.h
 .\objects\main.o: UART.h
+.\objects\main.o: recipe.h
 .\objects\main.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\string.h
 .\objects\main.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdio.h

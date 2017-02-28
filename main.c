@@ -3,6 +3,8 @@
 #include "SysClock.h"
 #include "LED.h"
 #include "UART.h"
+#include "recipe.h"
+
 
 #include <string.h>
 #include <stdio.h>
@@ -28,12 +30,13 @@ void setupGPIO(){
 	RCC->AHB2ENR |= RCC_AHB2ENR_GPIOAEN;
 	
 	//Input from PA0 Alternate function mode
-	GPIOA->MODER &= ~GPIO_MODER_MODER0;
-	GPIOA->MODER |= GPIO_MODER_MODER0_1|GPIO_MODER_MODER1_1;
+	GPIOA->MODER &= ((~GPIO_MODER_MODER0) & (~GPIO_MODER_MODER1));
+	GPIOA->MODER |= GPIO_MODER_MODER0_1 | GPIO_MODER_MODER1_1;
 
-	//Seturp Alternate Function Bologna
+	//Seturp Alternate Function Bologna for PA0 and PA1
 	GPIOA->AFR[0] &= ~GPIO_AFRL_AFRL0;
-	GPIOA->AFR[0] |= 0x0001;
+	GPIOA->AFR[0] |= 0x0011;
+	
 	
 	// //Set Speed
 	// GPIOA->OSPEEDR |= GPIO_OSPEEDER_OSPEEDR0;
@@ -86,7 +89,8 @@ void setupTimer2(){
 	TIM2->ARR = 20000;
 	
 	//Initial servo Positions
-	//todo
+	TIM2->CCR1 = pwmDuty[0];
+	TIM2->CCR2 = pwmDuty[0];
 	
 	//Input Caputure Filter 7 Cycles
 	//TIM2->CCMR1 |= TIM_CCMR1_IC1F_2 | TIM_CCMR1_IC1F_1 | TIM_CCMR1_IC1F_0;
@@ -114,19 +118,7 @@ void EXTI0_IRQHandler(void){
 	EXTI->PR1 |= EXTI_PR1_PIF0;
 }
 
-int post(){
-	while(!g_pendingInterrupt){
-		if(TIM2->CNT > 100000){
-			USART_Write(USART2, (uint8_t *)POSTERRORSTRING, strlen(POSTERRORSTRING));
-			
-			//Wait for input
-			while(1)
-				if('\r' == USART_Read(USART2)) return 0;
-		}
-	}
-	
-	return 1;
-}
+
 
 int setupPeriod(){
 	char rxByte = 0;
@@ -172,52 +164,49 @@ int setupPeriod(){
 	return 1;
 }
 
-void printHistogram(){
-		USART_Write(USART2, (uint8_t *) "\r\n", strlen("\r\n"));
-		for(int i = 0; i < 101; i++){
-			if( buckets[i] > 0) {
-				char bucketStr[25];
-				sprintf(bucketStr, "%d us: %d\r\n", lPeriodMS + i, buckets[i]);
-				USART_Write(USART2, (uint8_t *) bucketStr, strlen(bucketStr));
-			}
-		}
-}
+
 
 int main(void){
-	
+	char rxByte = 0;
 	System_Clock_Init(); // Switch System Clock = 80 MHz
-	LED_Init();
+	//LED_Init();
 	UART2_Init();
 	setupGPIO();
-	setupInterrupt();
+	//setupInterrupt();
 	setupTimer2();
 	
-	//Trigger initial interrupt
-	TIM2->EGR |= TIM_EGR_UG;
-	
-	//POST
-	while(!post());
-	USART_Write(USART2, (uint8_t *) "\r\nPOST SUCCEEDED\r\n", strlen("\r\nPOST SUCCEEDED\r\n"));
-	
-	
-	//Run the thing
-	while (1){
-		
-		while(!setupPeriod());
-		
-		char periodStr[25];
-		sprintf(periodStr, "Range is %d to %d\r\n", lPeriodMS, hPeriodMS);
-		USART_Write(USART2, (uint8_t *) periodStr, strlen(periodStr));
-		
-		for(int i = 0; i < 101; i++){
-			buckets[i] = 0;
-		}
-		started = 1;
-		while(started < 1001);
-		
-		printHistogram();
-		
-		USART_Write(USART2, (uint8_t *) "Restarting...\r\n", strlen("Restarting...\r\n"));
+	//	//Trigger initial interrupt
+	//TIM2->EGR |= TIM_EGR_UG;
+	while(1){
+		rxByte = USART_Read(USART2);
+		TIM2->CCR1 = pwmDuty[rxByte-48];
+		rxByte = 0;
+		rxByte = USART_Read(USART2);
+		TIM2->CCR2 = pwmDuty[rxByte-48];
 	}
+	//	//POST
+	//	while(!post());
+	//	USART_Write(USART2, (uint8_t *) "\r\nPOST SUCCEEDED\r\n", strlen("\r\nPOST SUCCEEDED\r\n"));
+	//	
+	//	
+	//	//Run the thing
+	//	while (1){
+	//		
+	//		while(!setupPeriod());
+	//		
+	//		char periodStr[25];
+	//		sprintf(periodStr, "Range is %d to %d\r\n", lPeriodMS, hPeriodMS);
+	//		USART_Write(USART2, (uint8_t *) periodStr, strlen(periodStr));
+	//		
+	//		for(int i = 0; i < 101; i++){
+	//			buckets[i] = 0;
+	//		}
+	//		started = 1;
+	//		while(started < 1001);
+	//		
+	//		printHistogram();
+	//		
+	//		USART_Write(USART2, (uint8_t *) "Restarting...\r\n", strlen("Restarting...\r\n"));
+	//	}
 }
 
