@@ -10,16 +10,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define POSTERRORSTRING "ERROR: No pulse within 100ms...\r\nPOST FAILED: Please Check connections and retry...\r\n"
-#define PERIODSTRING "Lower Limit: 950us, Upper Limit: 1050us\r\nWould you like to change this? (y/n):"
-
 #define DEBUG_PRINT
 
 char RxComByte = 0;
 uint8_t buffer[BufferSize];
-char str[50] = "";
-char str2[] = "My body is ready!!!!";
-char str3[] = "It is a 1!!!";
+
 
 uint8_t g_pendingInterrupt = 0;
 uint32_t clockT = 0;
@@ -157,12 +152,17 @@ void parseSingleCommand(char in, int servo){
 		case 'p':
 		case 'P':
 			recStat[servo] = FALSE;
+			Green_LED_Off();
 			break;
 		
 		//Continue
 		case 'c':
 		case 'C':
-			recStat[servo] = TRUE;
+			if( recPos[servo] != 0){
+				recStat[servo] = TRUE;
+				Green_LED_On();
+			}
+			
 			break;
 		
 		//No-Op
@@ -176,13 +176,18 @@ void parseSingleCommand(char in, int servo){
 			recStat[servo] = TRUE;
 			recPos[servo] = 0;
 			inLoop[servo] = FALSE;
+			Green_LED_On();
+			Red_LED_Off();
 			break;
 		
 		//Otherwise ignore
 		default:
+			USART_Write(USART2, (uint8_t *)"User Command Error\r\n>", strlen("User Command Error\r\n>"));
 			break;
 	}
 }
+
+
 
 //run a single instruction 
 void runInstruction( int servo ){
@@ -236,6 +241,35 @@ void runInstruction( int servo ){
 				*servos[servo] = pwmDuty[argument];
 			}
 			break;
+			
+			//Custom Command moves servo to the right if possible
+		case RIGHT:
+#ifdef DEBUG_PRINT
+			USART_Write(USART2, (uint8_t *)"RIGHT\r\n", strlen("RIGHT\r\n"));
+#endif
+		if(servoPos[servo] != 0)
+				//Calculate waits for this move
+				waitTimings[servo] = abs((int)servoPos[servo] - argument) << 1 ;
+				//Set Position
+				servoPos[servo] = argument;
+				//Send the servo there
+				*servos[servo] = pwmDuty[--servoPos[servo]];	
+		break;
+		
+		//Custom Command moves servo to the left if possible
+		case LEFT:
+#ifdef DEBUG_PRINT
+			USART_Write(USART2, (uint8_t *)"LEFT\r\n", strlen("LEFT\r\n"));
+#endif
+		if(servoPos[servo] != 5)
+				//Calculate waits for this move
+				waitTimings[servo] = abs((int)servoPos[servo] - argument) << 1 ;
+				//Set Position
+				servoPos[servo] = argument;
+				//Send the servo there
+				*servos[servo] = pwmDuty[++servoPos[servo]];
+		break;
+		
 		
 		//Start a loop
 		case LOOP:
@@ -245,7 +279,13 @@ void runInstruction( int servo ){
 #endif
 		
 			//check for nested loop
-			if( inLoop[servo] ) {} //TODO Loop Error
+			if( inLoop[servo] ) {
+				recPos[servo] = 0;
+				recStat[servo] = FALSE;
+				Red_LED_On();
+				Green_LED_On();
+				return;
+			} //Loop Error
 			else{
 				
 				//Setup Loop
@@ -263,7 +303,9 @@ void runInstruction( int servo ){
 #endif			
 		
 			//check for no loop
-			if( !inLoop[servo] ) {} //TODO Loop Error
+			if( !inLoop[servo] ) {
+				Red_LED_On();
+			} //TODO Loop Error
 			else{
 				
 				//check to see if finished
@@ -304,7 +346,8 @@ void runInstruction( int servo ){
 			recPos[servo] = 0;
 			recStat[servo] = FALSE;
 			return;
-		
+		default:
+			Red_LED_On();
 	}
 	
 	//Set next instruction
@@ -315,7 +358,7 @@ void runInstruction( int servo ){
 int main(void){
 	//char rxByte = 0;
 	System_Clock_Init(); // Switch System Clock = 80 MHz
-	//LED_Init();
+	LED_Init();
 	UART2_Init();
 	setupGPIO();
 	//setupInterrupt();
@@ -339,6 +382,7 @@ int main(void){
 	while (1){
 		char charRead;
 		while (USART_ReadNB(USART2, &charRead)){
+						USART_Write(USART2,(uint8_t *)&charRead, sizeof(char));
 			
 			if(charRead == '\r'){
 				USART_Write(USART2, (uint8_t *)"\r\n>", strlen("\r\n>"));

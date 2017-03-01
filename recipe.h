@@ -5,6 +5,8 @@
 #define LOOP 			0x80
 #define ENDLOOP		0xA0
 #define WAIT			0x40
+#define LEFT			0x60 //custom command 1 
+#define RIGHT			0xC0 //custom command 2
 #define RECIPEEND	0x00
 
 
