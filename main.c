@@ -8,9 +8,12 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #define POSTERRORSTRING "ERROR: No pulse within 100ms...\r\nPOST FAILED: Please Check connections and retry...\r\n"
 #define PERIODSTRING "Lower Limit: 950us, Upper Limit: 1050us\r\nWould you like to change this? (y/n):"
+
+#define DEBUG_PRINT
 
 char RxComByte = 0;
 uint8_t buffer[BufferSize];
@@ -35,6 +38,14 @@ volatile uint32_t *servos[2] = {&(TIM2->CCR1), &(TIM2->CCR2)};
 
 //Two commands
 char inputBuf[2] = {'\0', '\0'};
+
+//Loop stuff
+BOOL 		inLoop[2];
+uint8_t loopStart[2];
+uint8_t loopsRemaining[2];
+
+//Wait Timing
+uint8_t waitTimings[2] = {0, 0};
 
 void setupGPIO(){
 	RCC->AHB2ENR |= RCC_AHB2ENR_GPIOAEN;
@@ -164,6 +175,7 @@ void parseSingleCommand(char in, int servo){
 		case 'B':
 			recStat[servo] = TRUE;
 			recPos[servo] = 0;
+			inLoop[servo] = FALSE;
 			break;
 		
 		//Otherwise ignore
@@ -172,14 +184,146 @@ void parseSingleCommand(char in, int servo){
 	}
 }
 
+//run a single instruction 
+void runInstruction( int servo ){
+	
+	//Get instruction only portion
+	uint8_t instruction = recipeTest[recPos[servo]] & 0xE0;
+	uint8_t argument		= recipeTest[recPos[servo]] & 0x1F;
+	
+	//if we need to wait, decrement the counter, then wait
+	if(waitTimings[servo] > 0) {
+		
+#ifdef DEBUG_PRINT
+			USART_Write(USART2, (uint8_t *)".\r\n", strlen(".\r\n"));
+#endif
+		
+		waitTimings[servo]--;
+		return;
+	}
+	
+	//Do instruction parsing
+	switch (instruction){
+		
+		//Move
+		case MOV:
+			
+#ifdef DEBUG_PRINT
+			USART_Write(USART2, (uint8_t *)"MOV\r\n", strlen("MOV\r\n"));
+#endif
+		
+			//Check if out of range
+			if(5 < argument){
+				USART_Write(USART2, (uint8_t *)"MOV Argument error\r\n Stopping Execution\r\n>", strlen("MOV Argument error\r\n Stopping Execution\r\n>"));
+				
+				//reset statuses
+				recStat[servo] = FALSE;
+				recPos[servo] = 0;
+				inLoop[servo] = FALSE;
+				
+				//reset waits
+				waitTimings[servo] = 0;
+				
+			} else {
+				
+				//Calculate waits for this move
+				waitTimings[servo] = abs((int)servoPos[servo] - argument) << 1 ;
+				
+				//Set Position
+				servoPos[servo] = argument;
+				
+				//Send the servo there
+				*servos[servo] = pwmDuty[argument];
+			}
+			break;
+		
+		//Start a loop
+		case LOOP:
+			
+#ifdef DEBUG_PRINT
+			USART_Write(USART2, (uint8_t *)"LOOP\r\n", strlen("LOOP\r\n"));
+#endif
+		
+			//check for nested loop
+			if( inLoop[servo] ) {} //TODO Loop Error
+			else{
+				
+				//Setup Loop
+				inLoop[servo] = TRUE;
+				loopStart[servo] = recPos[servo];
+				loopsRemaining[servo] = argument;
+			}
+			break;
+		
+		//End a loop
+		case ENDLOOP:
+			
+#ifdef DEBUG_PRINT
+			USART_Write(USART2, (uint8_t *)"ENDLOOP\r\n", strlen("ENDLOOP\r\n"));
+#endif			
+		
+			//check for no loop
+			if( !inLoop[servo] ) {} //TODO Loop Error
+			else{
+				
+				//check to see if finished
+				if(loopsRemaining[servo] == 0){
+					
+					//Set loop to off
+					inLoop[servo] = FALSE;
+				
+				//if need to iterate again
+				} else {
+					
+					//start loop again
+					loopsRemaining[servo]--;
+					recPos[servo] = loopStart[servo];
+				}
+			}
+			break;
+		
+		//Wait for some amount of time
+		case WAIT:
+			
+#ifdef DEBUG_PRINT
+			USART_Write(USART2, (uint8_t *)"WAIT\r\n", strlen("WAIT\r\n"));
+#endif
+		
+			//Set number of times to wait
+			waitTimings[servo] = argument;
+			break;
+		
+		//End the recipe
+		case RECIPEEND:
+			
+#ifdef DEBUG_PRINT
+			USART_Write(USART2, (uint8_t *)"RECIPEEND\r\n", strlen("RECIPEEND\r\n"));
+#endif
+		
+			//Cleanup and set running to false
+			recPos[servo] = 0;
+			recStat[servo] = FALSE;
+			return;
+		
+	}
+	
+	//Set next instruction
+	recPos[servo]++;
+	
+}
+
 int main(void){
-	char rxByte = 0;
+	//char rxByte = 0;
 	System_Clock_Init(); // Switch System Clock = 80 MHz
 	//LED_Init();
 	UART2_Init();
 	setupGPIO();
 	//setupInterrupt();
 	setupTimer2();
+	
+	//Init that we aren't in a loop
+	inLoop[0] = FALSE;
+	inLoop[1] = FALSE;
 	
 	// 	//this loop switches between the two for testing
 	// 	while(1){
@@ -190,30 +334,45 @@ int main(void){
 	// 		TIM2->CCR2 = pwmDuty[rxByte-48];
 	// 	}
 	
+	USART_Write(USART2, (uint8_t *)"Setup Complete\r\n>", strlen("Setup Complete\r\n>"));
+	
 	while (1){
 		char charRead;
 		while (USART_ReadNB(USART2, &charRead)){
 			
 			if(charRead == '\r'){
+				USART_Write(USART2, (uint8_t *)"\r\n>", strlen("\r\n>"));
 				parseSingleCommand(inputBuf[0], 0);
 				parseSingleCommand(inputBuf[1], 1);
-				//parseCommands();
 			} else {
 				inputBuf[0] = inputBuf[1];
 				inputBuf[1] = charRead;
 			}
 		}
 		
+		//If running run an instruction on one servo
 		if(recStat[0]){
-			//TODO: Run Instruction
+			
+#ifdef DEBUG_PRINT
+			USART_Write(USART2, (uint8_t *)"1:", strlen("1:"));
+#endif
+			
+			runInstruction(0);
 		}
 		
+		//If running run an instruction on the other servo
 		if(recStat[1]){
-			//TODO: Run Instruction
+			
+#ifdef DEBUG_PRINT
+			USART_Write(USART2, (uint8_t *)"2:", strlen("2:"));
+#endif
+			
+			runInstruction(1);
 		}
+		
+		//Sit and wait
+		for( int i = 0; i < 8000000; i++){}
 		
 	}
-	
-	
 }
 
