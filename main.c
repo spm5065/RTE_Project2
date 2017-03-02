@@ -10,7 +10,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define DEBUG_PRINT
+//#define DEBUG_PRINT
+//#define DEBUG_WAIT_PRINT
 
 char RxComByte = 0;
 uint8_t buffer[BufferSize];
@@ -176,6 +177,7 @@ void parseSingleCommand(char in, int servo){
 			recStat[servo] = TRUE;
 			recPos[servo] = 0;
 			inLoop[servo] = FALSE;
+      waitTimings[servo] = 0;
 			Green_LED_On();
 			Red_LED_Off();
 			break;
@@ -193,13 +195,13 @@ void parseSingleCommand(char in, int servo){
 void runInstruction( int servo ){
 	
 	//Get instruction only portion
-	uint8_t instruction = recipeTest[recPos[servo]] & 0xE0;
-	uint8_t argument		= recipeTest[recPos[servo]] & 0x1F;
+	uint8_t instruction = recipeTest[servo][recPos[servo]] & 0xE0;
+	uint8_t argument		= recipeTest[servo][recPos[servo]] & 0x1F;
 	
 	//if we need to wait, decrement the counter, then wait
 	if(waitTimings[servo] > 0) {
 		
-#ifdef DEBUG_PRINT
+#ifdef DEBUG_WAIT_PRINT
 			USART_Write(USART2, (uint8_t *)".\r\n", strlen(".\r\n"));
 #endif
 		
@@ -225,10 +227,9 @@ void runInstruction( int servo ){
 				recStat[servo] = FALSE;
 				recPos[servo] = 0;
 				inLoop[servo] = FALSE;
-				
 				//reset waits
 				waitTimings[servo] = 0;
-				
+				Red_LED_On();
 			} else {
 				
 				//Calculate waits for this move
@@ -250,9 +251,8 @@ void runInstruction( int servo ){
 		if(servoPos[servo] != 0)
 				//Calculate waits for this move
 				waitTimings[servo] = abs((int)servoPos[servo] - argument) << 1 ;
-				//Set Position
-				servoPos[servo] = argument;
-				//Send the servo there
+        
+				//Send the servo there and set position
 				*servos[servo] = pwmDuty[--servoPos[servo]];	
 		break;
 		
@@ -264,9 +264,8 @@ void runInstruction( int servo ){
 		if(servoPos[servo] != 5)
 				//Calculate waits for this move
 				waitTimings[servo] = abs((int)servoPos[servo] - argument) << 1 ;
-				//Set Position
-				servoPos[servo] = argument;
-				//Send the servo there
+
+				//Send the servo there and set position
 				*servos[servo] = pwmDuty[++servoPos[servo]];
 		break;
 		
@@ -324,6 +323,8 @@ void runInstruction( int servo ){
 			}
 			break;
 		
+    
+    
 		//Wait for some amount of time
 		case WAIT:
 			
@@ -335,6 +336,8 @@ void runInstruction( int servo ){
 			waitTimings[servo] = argument;
 			break;
 		
+    
+    
 		//End the recipe
 		case RECIPEEND:
 			
@@ -348,6 +351,7 @@ void runInstruction( int servo ){
 			return;
 		default:
 			Red_LED_On();
+      Green_LED_Off();
 	}
 	
 	//Set next instruction
@@ -379,20 +383,26 @@ int main(void){
 	
 	USART_Write(USART2, (uint8_t *)"Setup Complete\r\n>", strlen("Setup Complete\r\n>"));
 	
+  Green_LED_Off();
+	Red_LED_Off();
+  
 	while (1){
 		char charRead;
-		while (USART_ReadNB(USART2, &charRead)){
-						USART_Write(USART2,(uint8_t *)&charRead, sizeof(char));
-			
-			if(charRead == '\r'){
-				USART_Write(USART2, (uint8_t *)"\r\n>", strlen("\r\n>"));
-				parseSingleCommand(inputBuf[0], 0);
-				parseSingleCommand(inputBuf[1], 1);
-			} else {
-				inputBuf[0] = inputBuf[1];
-				inputBuf[1] = charRead;
-			}
-		}
+		
+    //100ms delay + or - time spent reading characters
+		for( int i = 0; i < 303030; i++)
+      while (USART_ReadNB(USART2, &charRead)){
+              USART_Write(USART2,(uint8_t *)&charRead, sizeof(char));
+        
+        if(charRead == '\r'){
+          USART_Write(USART2, (uint8_t *)"\r\n>", strlen("\r\n>"));
+          parseSingleCommand(inputBuf[0], 0);
+          parseSingleCommand(inputBuf[1], 1);
+        } else {
+          inputBuf[0] = inputBuf[1];
+          inputBuf[1] = charRead;
+        }
+      }
 		
 		//If running run an instruction on one servo
 		if(recStat[0]){
@@ -413,9 +423,6 @@ int main(void){
 			
 			runInstruction(1);
 		}
-		
-		//Sit and wait
-		for( int i = 0; i < 8000000; i++){}
 		
 	}
 }
